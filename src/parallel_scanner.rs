@@ -1,18 +1,16 @@
 use std::collections::HashMap;
-use std::net::{Ipv4Addr, TcpStream};
+use std::net::Ipv4Addr;
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use crate::ip_range::IpRange;
-use crate::strategy::{ScanResult, ScanStrategy, get_service_name};
-use clap::{Command, Arg}; // Command from clap for CLI argument parsing
-use std::process::Command as StdCommand;
-use std::io;
+use crate::strategy::{ScanResult, ScanStrategy};
+use crate::constants::DEFAULT_SCAN_PORTS;
 
-#[derive(Debug)]
-struct ScanTask {
-    ip: Ipv4Addr,
+struct PortScanResult {
     port: u16,
+    state: ScanResult,
+    service: &'static str,
 }
 
 pub struct ParallelScanner {
@@ -21,132 +19,118 @@ pub struct ParallelScanner {
 }
 
 impl ParallelScanner {
-    pub fn new(strategy: Arc<dyn ScanStrategy + Send + Sync>, num_workers: usize) -> Self {
+    pub fn new<T>(strategy: T, num_workers: usize) -> Self 
+    where T: ScanStrategy + Send + Sync + 'static {
         Self {
-            strategy,
+            strategy: Arc::new(strategy),
             num_workers,
         }
     }
 
-    // Scan the IP range and ports
-    pub fn scan(&self, ip_range: IpRange, ports: Vec<u16>) {
-        let (tx, rx) = mpsc::channel::<ScanTask>();
-        let rx = Arc::new(Mutex::new(rx));
-        let results = Arc::new(Mutex::new(HashMap::<Ipv4Addr, Vec<(u16, ScanResult)>>::new()));
+    pub fn scan(&self, ip_range: IpRange, ports: Option<Vec<u16>>) {
+        let ports = Arc::new(ports.unwrap_or_else(|| DEFAULT_SCAN_PORTS.to_vec()));
 
-        let strategy = Arc::clone(&self.strategy);
-        let num_workers = self.num_workers;
+        let results: Arc<Mutex<HashMap<Ipv4Addr, Vec<PortScanResult>>>> = Arc::new(Mutex::new(HashMap::new()));
+        let (job_tx, job_rx) = mpsc::channel::<Ipv4Addr>();
+        let job_rx = Arc::new(Mutex::new(job_rx));
 
-        let mut workers = Vec::new();
-        for _ in 0..num_workers {
-            let rx = Arc::clone(&rx);
-            let strategy = Arc::clone(&strategy);
+        let start = Instant::now();
+
+        let mut handles = Vec::with_capacity(self.num_workers);
+        for _ in 0..self.num_workers {
+            let job_rx = Arc::clone(&job_rx);
             let results = Arc::clone(&results);
+            let strategy = Arc::clone(&self.strategy);
+            let ports = Arc::clone(&ports);
 
             let handle = thread::spawn(move || {
-                loop {
-                    let task_opt = {
-                        let lock = rx.lock().unwrap();
-                        lock.recv().ok()
-                    };
+                while let Ok(ip) = {
+                    let lock = job_rx.lock().unwrap();
+                    lock.recv()
+                } {
+                    let ip_str = ip.to_string();
 
-                    match task_opt {
-                        Some(task) => {
-                            // Only proceed if the host is up
-                            if !is_host_up(&task.ip) {
-                                return; // Skip this host if it is not up
-                            }
-
-                            let result = strategy.scan(&task.ip.to_string(), task.port);
-
-                            // Only record if the port is not closed
-                            match result {
-                                ScanResult::Closed => { /* skip closed ports */ }
-                                ScanResult::Open | ScanResult::Filtered | ScanResult::Unknown => {
-                                    let mut map = results.lock().unwrap();
-                                    map.entry(task.ip)
-                                        .or_default()
-                                        .push((task.port, result));
-                                }
-                            }
+                    // Collect open ports for this IP locally
+                    let mut open_ports = Vec::new();
+                    ports.iter().for_each(|&port| {
+                        if strategy.scan(&ip_str, port) == ScanResult::Open {
+                            open_ports.push(port);
                         }
-                        None => break, // No more tasks
+                    });
+
+                    // Update the results map once per IP
+                    if !open_ports.is_empty() {
+                        let mut results_map = results.lock().unwrap();
+                        let entry = results_map.entry(ip).or_insert_with(Vec::new);
+                        for port in open_ports {
+                            entry.push(PortScanResult {
+                                port,
+                                state: ScanResult::Open,
+                                service: get_service_name(port),
+                            });
+                        }
                     }
                 }
             });
-
-            workers.push(handle);
+            handles.push(handle);
         }
 
-        // Dispatch tasks to worker threads
         for ip in ip_range.iter() {
-            for &port in &ports {
-                tx.send(ScanTask { ip, port }).unwrap();
+            job_tx.send(ip).unwrap();
+        }
+        drop(job_tx);
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        let duration = start.elapsed();
+        let complete_results = results.lock().unwrap();
+
+        println!("");
+        println!(
+            "Done: {} IP addresses scanned ({} host/s up) in {:.2} seconds.",
+            ip_range.len(),
+            complete_results.len(),
+            duration.as_secs_f64()
+        );
+
+        for (ip, port_results) in complete_results.iter() {
+            println!("");
+            println!("Scan report for {}:", ip);
+            println!("PORT   STATE   SERVICE");
+
+            for result in port_results {
+                println!("{}/tcp   {}   {}", result.port, result.state.to_state(), result.service);
             }
         }
-
-        drop(tx); // Close the sender channel
-        for worker in workers {
-            worker.join().unwrap();
-        }
-
-        // Now print the results in Nmap-like format
-        let results = Arc::try_unwrap(results)
-            .expect("Failed to unwrap Arc")
-            .into_inner()
-            .expect("Failed to unlock Mutex");
-
-        for (ip, port_results) in results {
-            self.print_nmap_report(ip, port_results);
-        }
-    }
-
-    fn print_nmap_report(&self, ip: Ipv4Addr, port_results: Vec<(u16, ScanResult)>) {
-        let latency = self.get_latency(&ip); // Latency function should be implemented here
-
-        // Print header like Nmap
-        println!("Nmap scan report for {} ({})", ip, ip);
-        println!("Host is up ({:.3}s latency).\n", latency);
-        println!("PORT    STATE    SERVICE");
-
-        // Print port results
-        for (port, result) in port_results {
-            let state = result.to_state();
-            let service = get_service_name(port);
-            println!("{:<7}/tcp  {:<8} {}", port, state, service);
-        }
-
-        println!("\nNmap done: 1 IP address (1 host up) scanned in 1.0 seconds");
-    }
-
-    fn get_latency(&self, ip: &Ipv4Addr) -> f64 {
-        // Simulate latency for simplicity
-        // You can calculate the actual latency based on the TCP connect time.
-        0.053
     }
 }
 
-// Check if the host is alive by attempting to connect to port 80 (or other common port).
-fn is_host_up(ip: &Ipv4Addr) -> bool {
-    // Run the ping command
-    let output = StdCommand::new("ping")
-        .arg("-c 1") // Send 1 ping request
-        .arg(ip.to_string())
-        .output();
-
-    match output {
-        Ok(output) if output.status.success() => true, // Host is up (ping successful)
-        Ok(output) if is_filtered(&output) => false, // ICMP is filtered
-        Ok(_) => false, // Host is unreachable (no device or no route)
-        Err(_) => false, // Error during ping (e.g., no route)
+fn get_service_name(port: u16) -> &'static str {
+    match port {
+        21 => "FTP",
+        22 => "SSH",
+        23 => "Telnet",
+        25 => "SMTP",
+        53 => "DNS",
+        80 => "HTTP",
+        110 => "POP3",
+        135 => "RPC",
+        139 => "NetBIOS",
+        143 => "IMAP",
+        443 => "HTTPS",
+        445 => "SMB",
+        587 => "SMTP (TLS)",
+        993 => "IMAPS",
+        995 => "POP3S",
+        3306 => "MySQL",
+        3389 => "RDP",
+        5432 => "PostgreSQL",
+        5900 => "VNC",
+        6379 => "Redis",
+        8080 => "HTTP Alt",
+        8443 => "HTTPS Alt",
+        _ => "Unknown",
     }
-}
-
-// Helper function to check if the ping response indicates that ICMP is filtered
-fn is_filtered(output: &std::process::Output) -> bool {
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-
-    // If the ping result contains "Request timeout" or network errors, it's likely filtered
-    stdout.contains("Request timeout") || stderr.contains("Network is unreachable")
 }
