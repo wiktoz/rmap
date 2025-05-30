@@ -50,6 +50,7 @@ fn main() {
         )
         .arg(
             Arg::new("parallel")
+                .short("pl")
                 .long("parallel")
                 .help("Number of parallel threads")
                 .default_value("256")
