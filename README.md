@@ -6,11 +6,11 @@
 
 ## Features
 - Multithreaded scanning for high performance and speed
-- Supports multiple scan strategies (e.g., TCP connect, SYN scan)
+- Supports multiple scan strategies
 - Parses and scans various IP ranges and formats (single IPs, CIDR blocks, ranges)
 
 ## Usage
-`./rmap.exe [-r] [-tedpnfm] [-h] [dir1 dir2 ...]`
+`./rmap.exe [-hv] [-p <ports>] [-pl <threads_number>] [ip_range]`
 
 ### Flags
 `-h` **help** - prints help
