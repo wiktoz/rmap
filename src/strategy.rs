@@ -10,17 +10,6 @@ pub enum ScanResult {
     Unknown,
 }
 
-impl ScanResult {
-    pub fn to_state(&self) -> &'static str {
-        match *self {
-            ScanResult::Open => "open",
-            ScanResult::Closed => "closed",
-            ScanResult::Filtered => "filtered",
-            ScanResult::Unknown => "unknown",
-        }
-    }
-}
-
 pub trait ScanStrategy: Send + Sync {
     fn scan(&self, ip: &str, port: u16) -> ScanResult;
 }

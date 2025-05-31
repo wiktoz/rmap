@@ -2,15 +2,27 @@ use std::collections::HashMap;
 use std::net::Ipv4Addr;
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
-use std::time::Instant;
+use std::time::{Instant, Duration};
 use crate::ip_range::IpRange;
 use crate::strategy::{ScanResult, ScanStrategy};
 use crate::constants::DEFAULT_SCAN_PORTS;
 
-struct PortScanResult {
-    port: u16,
-    state: ScanResult,
-    service: &'static str,
+#[derive(Clone)]
+#[allow(dead_code)]
+pub struct PortScanResult {
+    pub port: u16,
+    pub state: ScanResult,
+    pub service: &'static str,
+}
+
+type PortScanMap = HashMap<Ipv4Addr, Vec<PortScanResult>>;
+
+#[allow(dead_code)]
+pub struct ScanResults {
+    pub results: HashMap<Ipv4Addr, Vec<PortScanResult>>,
+    pub active_hosts: usize,
+    pub scanned_hosts: usize,
+    pub duration: Duration,
 }
 
 pub struct ParallelScanner {
@@ -27,10 +39,10 @@ impl ParallelScanner {
         }
     }
 
-    pub fn scan(&self, ip_range: IpRange, ports: Option<Vec<u16>>) {
+    pub fn scan(&self, ip_range: IpRange, ports: Option<Vec<u16>>) -> ScanResults {
         let ports = Arc::new(ports.unwrap_or_else(|| DEFAULT_SCAN_PORTS.to_vec()));
 
-        let results: Arc<Mutex<HashMap<Ipv4Addr, Vec<PortScanResult>>>> = Arc::new(Mutex::new(HashMap::new()));
+        let results: Arc<Mutex<PortScanMap>> = Arc::new(Mutex::new(HashMap::new()));
         let (job_tx, job_rx) = mpsc::channel::<Ipv4Addr>();
         let job_rx = Arc::new(Mutex::new(job_rx));
 
@@ -50,7 +62,6 @@ impl ParallelScanner {
                 } {
                     let ip_str = ip.to_string();
 
-                    // Collect open ports for this IP locally
                     let mut open_ports = Vec::new();
                     ports.iter().for_each(|&port| {
                         if strategy.scan(&ip_str, port) == ScanResult::Open {
@@ -58,7 +69,6 @@ impl ParallelScanner {
                         }
                     });
 
-                    // Update the results map once per IP
                     if !open_ports.is_empty() {
                         let mut results_map = results.lock().unwrap();
                         let entry = results_map.entry(ip).or_insert_with(Vec::new);
@@ -87,22 +97,11 @@ impl ParallelScanner {
         let duration = start.elapsed();
         let complete_results = results.lock().unwrap();
 
-        println!("");
-        println!(
-            "Done: {} IP addresses scanned ({} host/s up) in {:.2} seconds.",
-            ip_range.len(),
-            complete_results.len(),
-            duration.as_secs_f64()
-        );
-
-        for (ip, port_results) in complete_results.iter() {
-            println!("");
-            println!("Scan report for {}:", ip);
-            println!("PORT   STATE   SERVICE");
-
-            for result in port_results {
-                println!("{}/tcp   {}   {}", result.port, result.state.to_state(), result.service);
-            }
+        ScanResults {
+            results: complete_results.clone(),
+            scanned_hosts: ip_range.len(),
+            active_hosts: complete_results.len(),
+            duration,
         }
     }
 }
