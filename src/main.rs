@@ -6,7 +6,7 @@ mod constants;
 use clap::{Command, Arg};
 
 use crate::parallel_scanner::ParallelScanner;
-use crate::strategy::{TcpConnectScan};
+use crate::strategy::{TcpConnectScan, UdpScan};
 use crate::ip_range::IpRange;
 
 fn parse_ports(s: &str) -> Result<Option<Vec<u16>>, String> {
@@ -43,15 +43,22 @@ fn main() {
                 .index(1)
         )
         .arg(
+            Arg::new("scan")
+                .short('s')
+                .long("scan")
+                .help("Technique of scanning")
+                .default_value("T")
+        )
+        .arg(
             Arg::new("ports")
                 .short('p')
                 .long("ports")
                 .help("Comma separated list of ports to scan, e.g. 22,80,443")
         )
         .arg(
-            Arg::new("parallel")
-                .short("pl")
-                .long("parallel")
+            Arg::new("threads")
+                .short('t')
+                .long("threads")
                 .help("Number of parallel threads")
                 .default_value("256")
                 .value_parser(clap::value_parser!(usize))
@@ -67,22 +74,27 @@ fn main() {
         }
     };
 
-    let parallel = *matches.get_one::<usize>("parallel").unwrap();
-
     let ip_range_str = matches.get_one::<String>("ip_range").expect("IP Range is required");
-
-    let scanner = ParallelScanner::new(TcpConnectScan, parallel);
-    let ip_range = IpRange::parse(ip_range_str);
-
-    match ip_range {
-        Ok(range) => {
-            println!("Scanning IP range ({} host/s)...", range.len());
-            scanner.scan(range, ports);
-        }
+    let ip_range = match IpRange::parse(ip_range_str) {
+        Ok(range) => range,
         Err(e) => {
             eprintln!("Error parsing IP range: {}", e);
-            return;
+            std::process::exit(1);
         }
-    }
-    
+    };
+
+    let parallel = *matches.get_one::<usize>("threads").unwrap();
+
+    let scan_str = matches.get_one::<String>("scan").map(String::as_str).unwrap_or("T");
+    let scanner: ParallelScanner = match scan_str.to_uppercase().as_str() {
+        "T" => ParallelScanner::new(TcpConnectScan, parallel),
+        "U" => ParallelScanner::new(UdpScan, parallel),
+        other => {
+            eprintln!("Invalid scan type '{}'. Use 'T' for TCP Connect or 'U' for UDP Scan.", other);
+            std::process::exit(1);
+        }
+    };
+
+    println!("Scanning IP range ({} host/s)...", ip_range.len());
+    scanner.scan(ip_range, ports); 
 }
