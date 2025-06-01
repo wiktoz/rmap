@@ -15,12 +15,16 @@ In order to build a library use a script based on OS.
 **Windows**
 ```shell
 .\run\win.ps1
+
+python ./python/test.py
 ```
 
 **UNIX**
 ```shell
 chmod +x ./run/linux.sh
-./run/linux.sh
+source ./run/linux.sh
+
+python ./python/test.py
 ```
 
 ## Test
