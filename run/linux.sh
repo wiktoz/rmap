@@ -14,7 +14,7 @@ fi
 source "$VENV_DIR/bin/activate"
 
 # Upgrade pip to the latest version
-python.exe -m pip install --upgrade pip
+python -m pip install --upgrade pip
 
 # Ensure pip and maturin are installed
 echo "Installing/Upgrading pip and maturin..."
