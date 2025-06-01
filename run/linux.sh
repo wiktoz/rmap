@@ -11,6 +11,7 @@ if [ ! -d "$VENV_DIR" ]; then
 fi
 
 # Activate virtual environment
+chmod +x "$VENV_DIR/bin/activate"
 source "$VENV_DIR/bin/activate"
 
 # Detect conflicting Python envs
