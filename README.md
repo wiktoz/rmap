@@ -10,9 +10,18 @@
 - Parses and scans various IP ranges and formats (single IPs, CIDR blocks, ranges)
 
 ## Build
-In order to build a library use a script based on OS:
-- `.\run\win.ps1` for Windows
-- `./run/linux.sh` for UNIX
+In order to build a library use a script based on OS.
+
+**Windows**
+```shell
+.\run\win.ps1
+```
+
+**UNIX**
+```shell
+chmod +x ./run/linux.sh
+./run/linux.sh
+```
 
 ## Test
 Simple file presenting library usage you can start using:
