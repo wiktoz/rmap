@@ -2,18 +2,6 @@ $ErrorActionPreference = "Stop"
 
 $venvDir = ".venv"
 
-# Detect conflicting Python envs
-if ($env:VIRTUAL_ENV -and $env:CONDA_PREFIX) {
-    Write-Host "Both VIRTUAL_ENV and CONDA_PREFIX environment variables are set."
-    Write-Host "Deactivating Conda environment to avoid conflicts..."
-    try {
-        conda deactivate
-    } catch {
-        Write-Error "Failed to deactivate Conda environment. Please deactivate it manually and rerun the script."
-        exit 1
-    }
-}
-
 # Create virtual environment if it doesn't exist
 if (-not (Test-Path $venvDir)) {
     Write-Host "Creating virtual environment..."
@@ -28,6 +16,18 @@ if (-not (Test-Path $activateScript)) {
 }
 Write-Host "Activating virtual environment..."
 & $activateScript
+
+# Detect conflicting Python envs
+if ($env:VIRTUAL_ENV -and $env:CONDA_PREFIX) {
+    Write-Host "Both VIRTUAL_ENV and CONDA_PREFIX environment variables are set."
+    Write-Host "Deactivating Conda environment to avoid conflicts..."
+    try {
+        conda deactivate
+    } catch {
+        Write-Error "Failed to deactivate Conda environment. Please deactivate it manually and rerun the script."
+        exit 1
+    }
+}
 
 python.exe -m pip install --upgrade pip
 

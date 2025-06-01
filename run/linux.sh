@@ -4,6 +4,15 @@ set -e
 
 VENV_DIR=".venv"
 
+# Create virtual environment if it doesn't exist
+if [ ! -d "$VENV_DIR" ]; then
+    echo "Creating virtual environment..."
+    python3 -m venv "$VENV_DIR"
+fi
+
+# Activate virtual environment
+source "$VENV_DIR/bin/activate"
+
 # Detect conflicting Python envs
 if [ -n "$VIRTUAL_ENV" ] && [ -n "$CONDA_PREFIX" ]; then
     echo "Both VIRTUAL_ENV and CONDA_PREFIX are set."
@@ -14,15 +23,6 @@ if [ -n "$VIRTUAL_ENV" ] && [ -n "$CONDA_PREFIX" ]; then
         exit 1
     }
 fi
-
-# Create virtual environment if it doesn't exist
-if [ ! -d "$VENV_DIR" ]; then
-    echo "Creating virtual environment..."
-    python3 -m venv "$VENV_DIR"
-fi
-
-# Activate virtual environment
-source "$VENV_DIR/bin/activate"
 
 # Upgrade pip to the latest version
 python -m pip install --upgrade pip
