@@ -5,7 +5,7 @@ set -e
 VENV_DIR=".venv"
 
 # Detect conflicting Python envs
-if [ -n "$CONDA_PREFIX" ]; then
+if [ -n "$VIRTUAL_ENV" ] && [ -n "$CONDA_PREFIX" ]; then
     echo "Both VIRTUAL_ENV and CONDA_PREFIX are set."
     echo "Deactivating conda environment to avoid conflicts..."
     conda deactivate || {
