@@ -3,26 +3,129 @@ use std::net::Ipv4Addr;
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::{Instant, Duration};
+use std::fmt;
 use crate::ip_range::IpRange;
-use crate::strategy::{ScanResult, ScanStrategy};
+use crate::strategy::ScanStrategy;
 use crate::constants::DEFAULT_SCAN_PORTS;
 
-#[derive(Clone)]
-#[allow(dead_code)]
-pub struct PortScanResult {
-    pub port: u16,
-    pub state: ScanResult,
-    pub service: &'static str,
-}
+use pyo3::prelude::*;
 
-type PortScanMap = HashMap<Ipv4Addr, Vec<PortScanResult>>;
 
-#[allow(dead_code)]
+#[pyclass(module = "rmap")]
 pub struct ScanResults {
     pub results: HashMap<Ipv4Addr, Vec<PortScanResult>>,
     pub active_hosts: usize,
     pub scanned_hosts: usize,
     pub duration: Duration,
+}
+
+#[pymethods]
+impl ScanResults {
+    #[getter]
+    fn results(&self) -> HashMap<String, Vec<PortScanResult>> {
+        self.results
+            .iter()
+            .map(|(ip, ports)| (ip.to_string(), ports.clone()))
+            .collect()
+    }
+
+    #[getter]
+    fn active_hosts(&self) -> usize {
+        self.active_hosts
+    }
+
+    #[getter]
+    fn scanned_hosts(&self) -> usize {
+        self.scanned_hosts
+    }
+
+    #[getter]
+    fn duration_secs(&self) -> f64 {
+        self.duration.as_secs_f64()
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "<ScanResults active_hosts={}, scanned_hosts={}, duration={:.2}s>",
+            self.active_hosts,
+            self.scanned_hosts,
+            self.duration_secs()
+        )
+    }
+
+    fn ips(&self) -> Vec<String> {
+        self.results.keys().map(|ip| ip.to_string()).collect()
+    }
+}
+
+
+#[pyclass(module = "rmap")]
+#[derive(Clone)]
+pub struct PortScanResult {
+    pub port: u16,
+    pub state: PortStatus,
+    pub service: &'static str,
+}
+
+#[pymethods]
+impl PortScanResult {
+    #[getter]
+    pub fn port(&self) -> u16 {
+        self.port
+    }
+
+    #[getter]
+    pub fn state(&self) -> PortStatus {
+        self.state.clone()
+    }
+
+    #[getter]
+    pub fn service(&self) -> &str {
+        self.service
+    }
+
+    fn __repr__(&self) -> PyResult<String> {
+        Ok(format!(
+            "<PortScanResult port={} state={} service='{}'>",
+            self.port,
+            self.state,
+            self.service
+        ))
+    }
+}
+
+type PortScanMap = HashMap<Ipv4Addr, Vec<PortScanResult>>;
+
+#[pyclass(eq, eq_int, module = "rmap")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PortStatus {
+    Open,
+    Closed,
+    Filtered,
+    Unknown,
+}
+
+impl fmt::Display for PortStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            PortStatus::Open => "Open",
+            PortStatus::Closed => "Closed",
+            PortStatus::Filtered => "Filtered",
+            PortStatus::Unknown => "Unknown",
+        };
+        write!(f, "{}", s)
+    }
+}
+
+#[pymethods]
+impl PortStatus {
+    fn __str__(&self) -> PyResult<String> {
+        Ok(self.to_string())  // Uses Display impl
+    }
+
+    fn __repr__(&self) -> PyResult<String> {
+        Ok(format!("PortStatus::{}", self.to_string()))
+    }
 }
 
 pub struct ParallelScanner {
@@ -64,7 +167,7 @@ impl ParallelScanner {
 
                     let mut open_ports = Vec::new();
                     ports.iter().for_each(|&port| {
-                        if strategy.scan(&ip_str, port) == ScanResult::Open {
+                        if strategy.scan(&ip_str, port) == PortStatus::Open {
                             open_ports.push(port);
                         }
                     });
@@ -75,7 +178,7 @@ impl ParallelScanner {
                         for port in open_ports {
                             entry.push(PortScanResult {
                                 port,
-                                state: ScanResult::Open,
+                                state: PortStatus::Open,
                                 service: get_service_name(port),
                             });
                         }
